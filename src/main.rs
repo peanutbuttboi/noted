@@ -19,8 +19,8 @@ use crate::{
     events::{Action, handle_events},
 };
 
-use std::io::stdout;
-use std::process::Command;
+use std::{env, fs::read_to_string, io::stdout, path::Path, str::FromStr};
+use std::{fs, process::Command};
 
 use anyhow::Result;
 use ratatui::crossterm::{
@@ -33,7 +33,7 @@ type Terminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::St
 /// Parses the config and creates the app instance.
 /// Then runs the main loop.
 fn main() -> Result<()> {
-    let config = Config::default();
+    let config = parse_config()?;
     let mut app = App::build(config)?;
     let mut terminal = ratatui::init();
 
@@ -83,10 +83,11 @@ fn run(terminal: &mut Terminal, app: &mut App) -> Result<()> {
 /// Run the editor to edit the note.
 fn run_editor(terminal: &mut Terminal, app: &mut App) -> Result<()> {
     let note = app.current_note_mut().unwrap();
+    let editor = env::var("EDITOR").unwrap();
 
     stdout().execute(LeaveAlternateScreen)?;
     disable_raw_mode()?;
-    let status = Command::new("nvim").arg(&note.path).status();
+    let status = Command::new(editor).arg(&note.path).status();
     stdout().execute(EnterAlternateScreen)?;
     enable_raw_mode()?;
     terminal.clear()?;
@@ -94,4 +95,22 @@ fn run_editor(terminal: &mut Terminal, app: &mut App) -> Result<()> {
 
     note.update_content()?;
     Ok(())
+}
+
+fn parse_config() -> Result<Config> {
+    let home_path = env::var("HOME");
+    if home_path.is_err() {
+        return Ok(Config::default());
+    }
+
+    let config_path = Path::new(&home_path.unwrap())
+        .join(".config")
+        .join("noted")
+        .join("config.toml");
+
+    if fs::exists(&config_path).expect("Can't check the existence of the config file.") {
+        Ok(Config::from_str(&read_to_string(config_path).unwrap())?)
+    } else {
+        Ok(Config::default())
+    }
 }

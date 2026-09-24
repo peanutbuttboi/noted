@@ -28,35 +28,41 @@ impl StyleSheet for MarkdownTheme {
 
 /// Render the UI.
 pub fn render(frame: &mut Frame, app: &mut App) {
-    let layout = Layout::vertical([
-        Constraint::Length(app.config.header.lines().count() as u16),
+    let mut constraints = vec![
+        Constraint::Length(app.config.ui.header.lines().count() as u16),
         Constraint::Fill(1),
         Constraint::Fill(3),
         Constraint::Length(1),
-    ])
-    .spacing(1)
-    .split(frame.area());
+    ];
 
-    let title = Paragraph::new(Text::styled(&app.config.header, Style::default()));
+    if !app.config.ui.show_guides {
+        constraints.pop();
+    }
+
+    let layout = Layout::vertical(constraints).spacing(1).split(frame.area());
+
+    let title = Paragraph::new(Text::styled(&app.config.ui.header, Style::default()));
     frame.render_widget(title.centered(), layout[0]);
 
-    let guides = Line::from(vec![
-        Span::styled(" Q ", Style::new().on_blue().black()),
-        " Quit ".into(),
-        Span::styled(" J ", Style::new().on_blue().black()),
-        " Down ".into(),
-        Span::styled(" K ", Style::new().on_blue().black()),
-        " Up ".into(),
-        Span::styled(" N ", Style::new().on_blue().black()),
-        " New ".into(),
-        Span::styled(" R ", Style::new().on_blue().black()),
-        " Rename ".into(),
-        Span::styled(" D ", Style::new().on_blue().black()),
-        " Delete ".into(),
-        Span::styled(" 󰌑 ", Style::new().on_blue().black()),
-        " Edit ".into(),
-    ]);
-    frame.render_widget(guides.centered(), layout[3]);
+    if app.config.ui.show_guides {
+        let guides = Line::from(vec![
+            Span::styled(" Q ", Style::default().bg(app.config.ui.accent).black()),
+            " Quit ".into(),
+            Span::styled(" J ", Style::default().bg(app.config.ui.accent).black()),
+            " Down ".into(),
+            Span::styled(" K ", Style::default().bg(app.config.ui.accent).black()),
+            " Up ".into(),
+            Span::styled(" N ", Style::default().bg(app.config.ui.accent).black()),
+            " New ".into(),
+            Span::styled(" R ", Style::default().bg(app.config.ui.accent).black()),
+            " Rename ".into(),
+            Span::styled(" D ", Style::default().bg(app.config.ui.accent).black()),
+            " Delete ".into(),
+            Span::styled(" 󰌑 ", Style::default().bg(app.config.ui.accent).black()),
+            " Edit ".into(),
+        ]);
+        frame.render_widget(guides.centered(), layout[3]);
+    }
 
     let list_area = layout[1].centered(Constraint::Ratio(3, 4), Constraint::Ratio(1, 2));
     render_list(frame, list_area, app);
@@ -85,7 +91,7 @@ pub fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let list = List::new(items)
         .scroll_padding(5)
-        .style(Color::Blue)
+        .style(app.config.ui.accent)
         .highlight_style(Modifier::REVERSED);
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
@@ -119,7 +125,7 @@ pub fn render_preview(frame: &mut Frame, area: Rect, app: &mut App) {
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
         .end_symbol(None)
-        .style(Color::Blue);
+        .style(app.config.ui.accent);
 
     let mut scrollbar_state =
         ScrollbarState::new(scroll_depth).position(app.scroll_offset.0 as usize);
@@ -137,16 +143,16 @@ pub fn render_preview(frame: &mut Frame, area: Rect, app: &mut App) {
 pub fn render_input_popup(frame: &mut Frame, area: Rect, app: &mut App) {
     let guides = Line::from(vec![
         " ".into(),
-        Span::styled(" Esc ", Style::new().on_blue().black()),
+        Span::styled(" Esc ", Style::default().bg(app.config.ui.accent).black()),
         " Quit ".into(),
-        Span::styled(" 󰌑 ", Style::new().on_blue().black()),
+        Span::styled(" 󰌑 ", Style::default().bg(app.config.ui.accent).black()),
         " Confirm ".into(),
     ])
     .centered();
 
     let title = match app.current_screen {
-        Screen::NewNote => Span::styled(" New Note ", Style::new().blue()),
-        Screen::RenameNote => Span::styled(" Rename Note ", Style::new().blue()),
+        Screen::NewNote => Span::styled(" New Note ", Style::default().fg(app.config.ui.accent)),
+        Screen::RenameNote => Span::styled(" Rename Note ", Style::default().fg(app.config.ui.accent)),
         _ => panic!("Impossible to reach."),
     };
 
@@ -156,7 +162,7 @@ pub fn render_input_popup(frame: &mut Frame, area: Rect, app: &mut App) {
             .title(title)
             .title_bottom(guides)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Blue))
+            .border_style(Style::default().fg(app.config.ui.accent))
             .padding(Padding::uniform(1)),
     );
 
@@ -186,14 +192,14 @@ pub fn render_input_popup(frame: &mut Frame, area: Rect, app: &mut App) {
 pub fn render_delete_popup(frame: &mut Frame, area: Rect, app: &mut App) {
     let guides = Line::from(vec![
         " ".into(),
-        Span::styled(" N ", Style::new().on_blue().black()),
+        Span::styled(" N ", Style::default().bg(app.config.ui.accent).black()),
         " No ".into(),
-        Span::styled(" Y ", Style::new().on_blue().black()),
+        Span::styled(" Y ", Style::default().bg(app.config.ui.accent).black()),
         " Yes ".into(),
     ])
     .centered();
 
-    let note_title = &app.current_note().unwrap().title;
+    let note_title = &app.current_note().unwrap().title.clone();
 
     let prompt = Line::from(vec![
         Span::styled("Delete ", Style::new().white()),
@@ -202,13 +208,13 @@ pub fn render_delete_popup(frame: &mut Frame, area: Rect, app: &mut App) {
     ])
     .centered();
 
-    let title = Span::styled(" Delete Note ", Style::new().blue());
+    let title = Span::styled(" Delete Note ", Style::default().fg(app.config.ui.accent));
     let popup = Paragraph::new(prompt).block(
         Block::default()
             .title(title)
             .title_bottom(guides)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Blue))
+            .border_style(Style::default().fg(app.config.ui.accent))
             .padding(Padding::uniform(1)),
     );
 

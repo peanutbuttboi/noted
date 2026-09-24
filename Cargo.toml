@@ -7,5 +7,7 @@ edition = "2024"
 anyhow = "1.0.104"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
+toml = "1.1.6"
 tui-markdown = "0.3.9"

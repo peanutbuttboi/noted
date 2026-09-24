@@ -21,7 +21,7 @@ cargo build --release
 ## Keybinds
 
 Most keybinds are shown in the app. The keybind guides can be disabled in
-the config file. *(To be implemented)*
+the config file.
 
 | key | does |
 |---|---|
@@ -37,7 +37,31 @@ the config file. *(To be implemented)*
 
 ## Configuraion
 
-*(To be implemented)*
+`noted` looks for the config file at `~/.config/noted/config.toml` (on linux).
+
+Here is an example config file:
+
+```toml
+# Notes directory (absolute path)
+notes_dir = "/home/peanut/notes"
+
+# UI related configuration
+[ui]
+# Header text
+header = """
+▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ▄▄▄ 
+██ █ ██ █  ██  ██ ▀ ██ █
+██ █ ██ █  ██  ██▀  ██ █
+▀█ █  █ █  ▐█   █ █  █ █
+▀▀ ▀ ▀▀▀▀  ▀▀  ▀▀▀▀ ▀▀▀▀"""
+
+# Display guides
+show_guides = true
+
+# The accent color. format: #RRGGBB (leave empty for default accent)
+accent = ""
+
+```
 
 ## AI Usage
 

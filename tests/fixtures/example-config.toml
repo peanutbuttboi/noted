@@ -1,0 +1,18 @@
+# Notes directory (absolute path)
+notes_dir = "/home/peanut/notes"
+
+# UI related configuration
+[ui]
+# Header text
+header = """
+▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ▄▄▄ 
+██ █ ██ █  ██  ██ ▀ ██ █
+██ █ ██ █  ██  ██▀  ██ █
+▀█ █  █ █  ▐█   █ █  █ █
+▀▀ ▀ ▀▀▀▀  ▀▀  ▀▀▀▀ ▀▀▀▀"""
+
+# Display guides
+show_guides = true
+
+# The accent color. format: #RRGGBB (leave empty for default accent)
+accent = ""
