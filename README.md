@@ -3,6 +3,7 @@ A tui-based interactive note taking app with features to preview, create, delete
 Built with [ratatui](https://ratatui.rs/) and [rust](https://rust-lang.org/).
 
 Notes are stored as plain text markdown files.
+![](./assets/screenshot.png)
 
 ## Build
 
