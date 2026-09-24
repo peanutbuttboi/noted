@@ -1,6 +1,8 @@
 use anyhow::Result;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
 
+use crate::app::{App, Screen};
+
 /// The possible actions to be handled
 pub enum Action {
     Up,
@@ -11,6 +13,9 @@ pub enum Action {
     Rename,
     Edit,
     Delete,
+    Char(char),
+    Confirm,
+    Deny,
     Quit,
     None,
 }
@@ -21,22 +26,43 @@ pub enum Action {
 ///
 /// # Errors
 /// It will fail if `crossterm::event` fails.
-pub fn handle_events() -> Result<Action> {
+pub fn handle_events(app: &mut App) -> Result<Action> {
     match event::read()? {
-        Event::Key(key) => match (key.code, key.modifiers) {
-            (KeyCode::Char('k'), KeyModifiers::NONE) => Ok(Action::Up),
-            (KeyCode::Char('j'), KeyModifiers::NONE) => Ok(Action::Down),
-            (KeyCode::Char('k'), KeyModifiers::CONTROL) => Ok(Action::ScrollUp(1)),
-            (KeyCode::Char('j'), KeyModifiers::CONTROL) => Ok(Action::ScrollDown(1)),
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => Ok(Action::ScrollUp(23)),
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => Ok(Action::ScrollDown(23)),
-            (KeyCode::Char('n'), KeyModifiers::NONE) => Ok(Action::New),
-            (KeyCode::Char('r'), KeyModifiers::NONE) => Ok(Action::Rename),
-            (KeyCode::Char('d'), KeyModifiers::NONE) => Ok(Action::Delete),
-            (KeyCode::Char('q'), KeyModifiers::NONE) => Ok(Action::Quit),
-            (KeyCode::Enter, KeyModifiers::NONE) => Ok(Action::Edit),
-            _ => Ok(Action::None),
-        },
+        Event::Key(key) => {
+            match app.current_screen {
+                Screen::Main => match (key.code, key.modifiers) {
+                    (KeyCode::Char('k'), KeyModifiers::NONE)
+                    | (KeyCode::Up, KeyModifiers::NONE) => Ok(Action::Up),
+                    (KeyCode::Char('j'), KeyModifiers::NONE)
+                    | (KeyCode::Down, KeyModifiers::NONE) => Ok(Action::Down),
+                    (KeyCode::Char('k'), KeyModifiers::CONTROL) => Ok(Action::ScrollUp(1)),
+                    (KeyCode::Char('j'), KeyModifiers::CONTROL) => Ok(Action::ScrollDown(1)),
+                    (KeyCode::Char('u'), KeyModifiers::CONTROL) => Ok(Action::ScrollUp(23)),
+                    (KeyCode::Char('d'), KeyModifiers::CONTROL) => Ok(Action::ScrollDown(23)),
+                    (KeyCode::Char('n'), KeyModifiers::NONE) => Ok(Action::New),
+                    (KeyCode::Char('r'), KeyModifiers::NONE) => Ok(Action::Rename),
+                    (KeyCode::Char('d'), KeyModifiers::NONE) => Ok(Action::Delete),
+                    (KeyCode::Char('q'), KeyModifiers::NONE)
+                    | (KeyCode::Esc, KeyModifiers::NONE) => Ok(Action::Quit),
+                    (KeyCode::Enter, KeyModifiers::NONE) => Ok(Action::Edit),
+                    _ => Ok(Action::None),
+                },
+
+                Screen::NewNote | Screen::RenameNote => match key.code {
+                    KeyCode::Enter => Ok(Action::Confirm),
+                    KeyCode::Esc => Ok(Action::Deny),
+                    KeyCode::Backspace => Ok(Action::Delete),
+                    KeyCode::Char(k) => Ok(Action::Char(k)),
+                    _ => Ok(Action::None),
+                },
+
+                Screen::DeleteNote => match key.code {
+                    KeyCode::Char('y') | KeyCode::Enter => Ok(Action::Confirm),
+                    KeyCode::Char('n') | KeyCode::Esc => Ok(Action::Deny),
+                    _ => Ok(Action::None),
+                },
+            }
+        }
         _ => Ok(Action::None),
     }
 }

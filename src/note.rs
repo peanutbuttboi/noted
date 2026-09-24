@@ -31,7 +31,7 @@ pub enum NoteError {
 }
 
 /// The state of a note.
-#[derive(Default, Debug)]
+#[derive(PartialEq, Default, Debug)]
 pub struct Note {
     pub title: String,
     pub content: String,
