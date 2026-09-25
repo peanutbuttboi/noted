@@ -26,7 +26,7 @@ the config file.
 
 | key | does |
 |---|---|
-| `↵` | Opens the note in preffered editor / Confirms the popup |
+| `↵` | Opens the note in preferred editor / Confirms the popup |
 | `j` / `↓` | Next note in the list |
 | `k` / `↑` | Previous note in the list |
 | `C-j` / `C-d` | Scroll down the preview |
@@ -36,7 +36,7 @@ the config file.
 | `d` | Delete a note |
 | `q` / `Esc` | Quit |
 
-## Configuraion
+## Configuration
 
 `noted` looks for the config file at `~/.config/noted/config.toml` (on linux).
 

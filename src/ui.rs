@@ -3,7 +3,7 @@ use crate::app::{App, Screen};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Margin, Position, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
         Block, Borders, Clear, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
@@ -76,6 +76,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::DeleteNote => render_delete_popup(frame, frame.area(), app),
         _ => {}
     }
+
+    if let Some(text) = app.status.take() {
+        render_status(frame, frame.area(), app, text);
+    }
 }
 
 /// Render the list of notes.
@@ -83,10 +87,7 @@ pub fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let items = app
         .notes
         .iter()
-        .map(|note| {
-            let title = note.0.to_string();
-            ListItem::new(Line::from(title).centered())
-        })
+        .map(|note| ListItem::new(Line::from(note.title.as_str()).centered()))
         .collect::<Vec<_>>();
 
     let list = List::new(items)
@@ -99,26 +100,26 @@ pub fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
 /// Render the previewer.
 pub fn render_preview(frame: &mut Frame, area: Rect, app: &mut App) {
-    let content = app
-        .list_state
-        .selected()
-        .and_then(|index| app.notes.values().nth(index))
-        .map(|note| note.content.as_str())
-        .unwrap_or_default();
+    let content = app.current_note().map_or("", |note| &note.content);
 
-    let options = Options::new(MarkdownTheme).code_theme(BuiltinCodeTheme::InspiredGitHub);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .padding(Padding::horizontal(1));
+    let inner = block.inner(area);
+
+    let options = Options::new(MarkdownTheme).code_theme(BuiltinCodeTheme::Base16EightiesDark);
     let formatted_text = tui_markdown::from_str_with_options(content, &options);
-    let scroll_depth = formatted_text.height();
-    app.scroll_offset.0 = app.scroll_offset.0.min(scroll_depth as u16);
+
     let preview = Paragraph::new(formatted_text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray))
-                .padding(Padding::horizontal(1)),
-        )
-        .wrap(Wrap { trim: false })
-        .scroll(app.scroll_offset);
+        .block(block)
+        .wrap(Wrap { trim: false });
+
+    let scroll_depth = preview
+        .line_count(inner.width)
+        .saturating_sub(area.height as usize);
+
+    let preview = preview.scroll((app.scroll_offset.min(scroll_depth as u16), 0));
 
     frame.render_widget(preview, area);
 
@@ -127,8 +128,9 @@ pub fn render_preview(frame: &mut Frame, area: Rect, app: &mut App) {
         .end_symbol(None)
         .style(app.config.ui.accent);
 
+    app.set_scroll_offset(app.scroll_offset.min(scroll_depth as u16));
     let mut scrollbar_state =
-        ScrollbarState::new(scroll_depth).position(app.scroll_offset.0 as usize);
+        ScrollbarState::new(scroll_depth).position((app.scroll_offset as usize).min(scroll_depth));
 
     frame.render_stateful_widget(
         scrollbar,
@@ -140,7 +142,7 @@ pub fn render_preview(frame: &mut Frame, area: Rect, app: &mut App) {
     );
 }
 
-pub fn render_input_popup(frame: &mut Frame, area: Rect, app: &mut App) {
+pub fn render_input_popup(frame: &mut Frame, area: Rect, app: &App) {
     let guides = Line::from(vec![
         " ".into(),
         Span::styled(" Esc ", Style::default().bg(app.config.ui.accent).black()),
@@ -152,8 +154,10 @@ pub fn render_input_popup(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let title = match app.current_screen {
         Screen::NewNote => Span::styled(" New Note ", Style::default().fg(app.config.ui.accent)),
-        Screen::RenameNote => Span::styled(" Rename Note ", Style::default().fg(app.config.ui.accent)),
-        _ => panic!("Impossible to reach."),
+        Screen::RenameNote => {
+            Span::styled(" Rename Note ", Style::default().fg(app.config.ui.accent))
+        }
+        _ => unreachable!(),
     };
 
     let input = Line::from(app.input.clone()).style(Style::new().white());
@@ -168,7 +172,7 @@ pub fn render_input_popup(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let popup_layout = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(6),
+        Constraint::Length(5),
         Constraint::Fill(1),
     ])
     .split(area);
@@ -189,7 +193,7 @@ pub fn render_input_popup(frame: &mut Frame, area: Rect, app: &mut App) {
     ));
 }
 
-pub fn render_delete_popup(frame: &mut Frame, area: Rect, app: &mut App) {
+pub fn render_delete_popup(frame: &mut Frame, area: Rect, app: &App) {
     let guides = Line::from(vec![
         " ".into(),
         Span::styled(" N ", Style::default().bg(app.config.ui.accent).black()),
@@ -199,7 +203,10 @@ pub fn render_delete_popup(frame: &mut Frame, area: Rect, app: &mut App) {
     ])
     .centered();
 
-    let note_title = &app.current_note().unwrap().title.clone();
+    let Some(note) = app.current_note() else {
+        return;
+    };
+    let note_title = note.title.as_str();
 
     let prompt = Line::from(vec![
         Span::styled("Delete ", Style::new().white()),
@@ -220,7 +227,7 @@ pub fn render_delete_popup(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let popup_layout = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(6),
+        Constraint::Length(5),
         Constraint::Fill(1),
     ])
     .split(area);
@@ -231,6 +238,40 @@ pub fn render_delete_popup(frame: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Fill(1),
     ])
     .split(popup_layout[1])[1];
+
+    frame.render_widget(Clear, popup_layout);
+    frame.render_widget(popup, popup_layout);
+}
+
+pub fn render_status(frame: &mut Frame, area: Rect, app: &App, status: impl AsRef<str>) {
+    let text = Line::from(status.as_ref()).centered().bold();
+    let popup = Paragraph::new(text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(app.config.ui.accent))
+            .padding(Padding::uniform(1)),
+    );
+
+    let popup_layout = Layout::vertical([
+        Constraint::Length(status.as_ref().lines().count() as u16 + 4),
+        Constraint::Fill(1),
+    ])
+    .split(area);
+
+    let popup_layout = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(
+            (status
+                .as_ref()
+                .lines()
+                .max_by_key(|x| x.len())
+                .unwrap_or_default()
+                .len()
+                + 4)
+            .max(30) as u16,
+        ),
+    ])
+    .split(popup_layout[0])[1];
 
     frame.render_widget(Clear, popup_layout);
     frame.render_widget(popup, popup_layout);

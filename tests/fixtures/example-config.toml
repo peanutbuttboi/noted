@@ -1,5 +1,5 @@
 # Notes directory (absolute path)
-notes_dir = "/home/peanut/notes"
+notes_dir = "~/notes"
 
 # UI related configuration
 [ui]

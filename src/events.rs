@@ -1,4 +1,5 @@
 use anyhow::Result;
+use crossterm::event::KeyEventKind;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
 
 use crate::app::{App, Screen};
@@ -28,7 +29,7 @@ pub enum Action {
 /// It will fail if `crossterm::event` fails.
 pub fn handle_events(app: &mut App) -> Result<Action> {
     match event::read()? {
-        Event::Key(key) => {
+        Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
             match app.current_screen {
                 Screen::Main => match (key.code, key.modifiers) {
                     (KeyCode::Char('k'), KeyModifiers::NONE)
@@ -48,19 +49,25 @@ pub fn handle_events(app: &mut App) -> Result<Action> {
                     _ => Ok(Action::None),
                 },
 
-                Screen::NewNote | Screen::RenameNote => match key.code {
-                    KeyCode::Enter => Ok(Action::Confirm),
-                    KeyCode::Esc => Ok(Action::Deny),
-                    KeyCode::Backspace => Ok(Action::Delete),
-                    KeyCode::Char(k) => Ok(Action::Char(k)),
-                    _ => Ok(Action::None),
-                },
+                Screen::NewNote | Screen::RenameNote
+                    if key.modifiers == KeyModifiers::NONE
+                        || key.modifiers == KeyModifiers::SHIFT =>
+                {
+                    match key.code {
+                        KeyCode::Enter => Ok(Action::Confirm),
+                        KeyCode::Esc => Ok(Action::Deny),
+                        KeyCode::Backspace => Ok(Action::Delete),
+                        KeyCode::Char(k) => Ok(Action::Char(k)),
+                        _ => Ok(Action::None),
+                    }
+                }
 
-                Screen::DeleteNote => match key.code {
+                Screen::DeleteNote if key.modifiers == KeyModifiers::NONE => match key.code {
                     KeyCode::Char('y') | KeyCode::Enter => Ok(Action::Confirm),
                     KeyCode::Char('n') | KeyCode::Esc => Ok(Action::Deny),
                     _ => Ok(Action::None),
                 },
+                _ => Ok(Action::None),
             }
         }
         _ => Ok(Action::None),

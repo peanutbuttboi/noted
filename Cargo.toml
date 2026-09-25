@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 crossterm = "0.29.0"
-ratatui = "0.30.2"
+dirs = "7.0.0"
+edit = "0.1.5"
+ratatui = { version  = "0.30.2", features = ["unstable-rendered-line-info"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 toml = "1.1.6"

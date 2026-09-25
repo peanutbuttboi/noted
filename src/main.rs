@@ -19,13 +19,12 @@ use crate::{
     events::{Action, handle_events},
 };
 
-use std::{env, fs::read_to_string, io::stdout, path::Path, str::FromStr};
-use std::{fs, process::Command};
+use std::{fs, io::stdout, path::Path, str::FromStr};
 
-use anyhow::Result;
-use ratatui::crossterm::{
-    ExecutableCommand,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+use anyhow::{Context, Result, bail};
+use crossterm::execute;
+use ratatui::crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
 type Terminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
@@ -54,9 +53,30 @@ fn run(terminal: &mut Terminal, app: &mut App) -> Result<()> {
                 Action::ScrollUp(amount) => app.scroll_up(amount),
                 Action::ScrollDown(amount) => app.scroll_down(amount),
                 Action::New => app.enter_screen(Screen::NewNote),
-                Action::Rename => app.enter_screen(Screen::RenameNote),
-                Action::Delete => app.enter_screen(Screen::DeleteNote),
-                Action::Edit => run_editor(terminal, app)?,
+                Action::Rename => {
+                    if app.current_note().is_some() {
+                        app.enter_screen(Screen::RenameNote);
+                    } else {
+                        app.set_status("No note selected".to_string());
+                    }
+                }
+                Action::Delete => {
+                    if app.current_note().is_some() {
+                        app.enter_screen(Screen::DeleteNote);
+                    } else {
+                        app.set_status("No note selected".to_string());
+                    }
+                }
+
+                Action::Edit => {
+                    if app.current_note().is_some() {
+                        if let Err(err) = run_editor(terminal, app) {
+                            app.set_status(format!("{err:#}"));
+                        }
+                    } else {
+                        app.set_status("No note selected".to_string());
+                    }
+                }
                 Action::Quit => break Ok(()),
                 _ => {}
             },
@@ -67,12 +87,20 @@ fn run(terminal: &mut Terminal, app: &mut App) -> Result<()> {
                 Action::Delete => {
                     app.input.pop();
                 }
-                Action::Confirm => app.save_input()?,
+                Action::Confirm => {
+                    if let Err(err) = app.save_input() {
+                        app.set_status(format!("{err:#}"));
+                    }
+                }
                 Action::Deny => app.enter_screen(Screen::Main),
                 _ => {}
             },
             Screen::DeleteNote => match handle_events(app)? {
-                Action::Confirm => app.delete_note()?,
+                Action::Confirm => {
+                    if let Err(err) = app.delete_note() {
+                        app.set_status(format!("{err:#}"));
+                    }
+                }
                 Action::Deny => app.enter_screen(Screen::Main),
                 _ => {}
             },
@@ -82,35 +110,32 @@ fn run(terminal: &mut Terminal, app: &mut App) -> Result<()> {
 
 /// Run the editor to edit the note.
 fn run_editor(terminal: &mut Terminal, app: &mut App) -> Result<()> {
-    let note = app.current_note_mut().unwrap();
-    let editor = env::var("EDITOR").unwrap();
+    let Some(note) = app.current_note_mut() else {
+        bail!("No note selected")
+    };
 
-    stdout().execute(LeaveAlternateScreen)?;
+    execute!(stdout(), LeaveAlternateScreen)?;
     disable_raw_mode()?;
-    let status = Command::new(editor).arg(&note.path).status();
-    stdout().execute(EnterAlternateScreen)?;
+    let edit_result = edit::edit_file(&note.path);
     enable_raw_mode()?;
+    execute!(stdout(), EnterAlternateScreen)?;
     terminal.clear()?;
-    status?;
+    edit_result?;
 
     note.update_content()?;
     Ok(())
 }
 
 fn parse_config() -> Result<Config> {
-    let home_path = env::var("HOME");
-    if home_path.is_err() {
-        return Ok(Config::default());
-    }
+    let Some(config_dir) = dirs::config_dir() else {
+        return Config::user_default();
+    };
 
-    let config_path = Path::new(&home_path.unwrap())
-        .join(".config")
-        .join("noted")
-        .join("config.toml");
+    let config_path = Path::new(&config_dir).join("noted").join("config.toml");
 
-    if fs::exists(&config_path).expect("Can't check the existence of the config file.") {
-        Ok(Config::from_str(&read_to_string(config_path).unwrap())?)
+    if fs::exists(&config_path).context("Failed to check config file's existence.")? {
+        Ok(Config::from_str(&fs::read_to_string(config_path)?)?)
     } else {
-        Ok(Config::default())
+        Config::user_default()
     }
 }
