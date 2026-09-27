@@ -1,32 +1,26 @@
-use crate::{config::Config, note::Note};
+use crate::{
+    config::Config,
+    note::{Note, NoteError},
+};
 
 use ratatui::widgets::ListState;
 use std::{
     fs::{self, OpenOptions, read_dir},
     path::Path,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 use anyhow::{Context, Result, bail};
 
-/// Current app screen
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Screen {
-    Main,
-    NewNote,
-    DeleteNote,
-    RenameNote,
-}
-
-/// App structure
+/// App structure.
 #[derive(Debug)]
 pub struct App {
-    pub notes: Vec<Note>,
-    pub config: Config,
-    pub list_state: ListState,
-    pub scroll_offset: u16,
-    pub current_screen: Screen,
-    pub input: String,
-    pub status: Option<String>,
+    notes: Vec<Note>,
+    config: Config,
+    list_state: ListState,
+    scroll: Scroll,
+    screen: Screen,
+    status: Option<String>,
 }
 
 impl App {
@@ -45,6 +39,7 @@ impl App {
 
             match Note::from_path(&path) {
                 Ok(note) => notes.push(note),
+                Err(NoteError::NotMarkdown(_) | NoteError::NotAFile(_)) => {}
                 Err(e) => eprintln!("Warning: Invalid file: {e}"),
             };
         }
@@ -57,33 +52,148 @@ impl App {
             notes,
             config,
             list_state: ListState::default().with_selected(selected),
-            scroll_offset: 0,
-            current_screen: Screen::Main,
-            input: String::new(),
+            scroll: Scroll::default(),
+            screen: Screen::Main,
             status: None,
         })
     }
 
-    /// Returns a reference to the currently selected `Note` entry.
-    ///
-    /// Returns `None` if no note exists.
-    pub fn current_note(&self) -> Option<&Note> {
-        self.notes.get(self.list_state.selected()?)
+    /// Returns a reference to `notes`.
+    pub fn notes(&self) -> &Vec<Note> {
+        &self.notes
     }
 
-    /// Returns a mutable reference to the currently selected `Note` entry.
-    ///
-    /// Returns `None` if no note exists.
-    pub fn current_note_mut(&mut self) -> Option<&mut Note> {
-        self.notes.get_mut(self.list_state.selected()?)
+    /// Returns a mutable reference to `notes`.
+    pub fn note_mut(&mut self, index: usize) -> &mut Note {
+        &mut self.notes[index]
     }
 
+    /// Returns a reference to `config`.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Returns a reference to `list_state`.
+    pub fn list_state(&self) -> &ListState {
+        &self.list_state
+    }
+
+    /// Returns a reference to `screen`.
+    pub fn screen(&self) -> &Screen {
+        &self.screen
+    }
+
+    /// Returns a reference to `status`.
+    pub fn status(&self) -> &Option<String> {
+        &self.status
+    }
+
+    /// Index of the selected note, or None if there is no valid selection.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.list_state.selected().filter(|&i| i < self.notes.len())
+    }
+
+    /// Returns scroll `offset`.
+    pub fn scroll_offset(&self) -> u16 {
+        self.scroll.offset()
+    }
+
+    /// scrolls down `amount`.
+    pub fn scroll_down(&mut self, amount: u16) {
+        self.scroll.down(amount);
+    }
+
+    /// scrolls up `amount`.
+    pub fn scroll_up(&mut self, amount: u16) {
+        self.scroll.up(amount);
+    }
+
+    /// Reconcile with the measurements from the last layout pass.
+    pub fn sync_scroll(&mut self, viewport: u16, content: u16) {
+        self.scroll.sync(viewport, content);
+    }
+
+    /// Sets the screen for creating a new note.
+    pub fn begin_new_note(&mut self) {
+        self.screen = Screen::NewNote {
+            input: String::new(),
+        };
+    }
+
+    /// Sets the screen for renaming a note.
+    ///
+    /// # Errors
+    /// Will fail if no note is selected.
+    pub fn begin_rename_note(&mut self) -> Result<()> {
+        let index = self.selected_index().context("No note selected")?;
+        let input = self.notes[index].title.clone();
+        self.screen = Screen::RenameNote { index, input };
+        Ok(())
+    }
+
+    /// Sets the screen for deleting a note.
+    ///
+    /// # Errors
+    /// Will fail if no note is selected.
+    pub fn begin_delete_note(&mut self) -> Result<()> {
+        let index = self.selected_index().context("No note selected")?;
+        self.screen = Screen::DeleteNote { index };
+        Ok(())
+    }
+
+    // Removes the last character in the `input`.
+    pub fn pop_input(&mut self) {
+        if let Some(input) = self.input_mut()
+            && let Some((idx, _)) = input.grapheme_indices(true).next_back()
+        {
+            input.truncate(idx);
+        }
+    }
+
+    /// Discards the current modal. Resetting back to `Screen::Main`.
+    pub fn cancel(&mut self) {
+        self.screen = Screen::Main;
+    }
+
+    /// Applies the current modal. Keeps it open on error so the user can fix input.
+    pub fn confirm(&mut self) -> Result<()> {
+        let result = match self.screen.clone() {
+            Screen::Main => return Ok(()),
+            Screen::NewNote { input } => self.create_note(input),
+            Screen::RenameNote { index, input } => self.rename_note(index, input),
+            Screen::DeleteNote { index } => self.delete_note(index),
+        };
+        if result.is_ok() {
+            self.screen = Screen::Main;
+        }
+        result
+    }
+
+    /// Mutable access to the text buffer when a text prompt is open.
+    pub fn input_mut(&mut self) -> Option<&mut String> {
+        match &mut self.screen {
+            Screen::NewNote { input } | Screen::RenameNote { input, .. } => Some(input),
+            _ => None,
+        }
+    }
+
+    /// Sets the `status` field to be displayed by the UI.
     pub fn set_status(&mut self, status: String) {
         self.status = Some(status);
     }
 
+    /// Sets the `list_state`.
+    pub fn set_list_state(&mut self, list_state: ListState) {
+        self.list_state = list_state;
+    }
+
+    /// clears the `status`.
+    pub fn clear_status(&mut self) {
+        self.status = None;
+    }
+
     /// Selects the next note entry.
-    pub fn select_next(&mut self) {
+    pub fn select_next_note(&mut self) {
         let len = self.notes.len();
         if len == 0 {
             self.list_state.select(None);
@@ -94,11 +204,11 @@ impl App {
             .selected()
             .map_or(0, |i| (i + 1).min(len - 1));
         self.list_state.select(Some(next));
-        self.scroll_offset = 0;
+        self.scroll.reset();
     }
 
     /// Selects the previous note entry.
-    pub fn select_prev(&mut self) {
+    pub fn select_prev_note(&mut self) {
         let len = self.notes.len();
         if len == 0 {
             self.list_state.select(None);
@@ -109,105 +219,36 @@ impl App {
             .selected()
             .map_or(0, |i| i.saturating_sub(1));
         self.list_state.select(Some(prev));
-        self.scroll_offset = 0;
-    }
-
-    pub fn set_scroll_offset(&mut self, offset: u16) {
-        self.scroll_offset = offset;
-    }
-
-    /// Scrolls down by `amount`
-    pub fn scroll_down(&mut self, amount: u16) {
-        self.scroll_offset = self.scroll_offset.saturating_add(amount);
-    }
-
-    /// Scrolls up by `amount`
-    pub fn scroll_up(&mut self, amount: u16) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(amount);
-    }
-
-    /// Enters the respective `Screen`
-    pub fn enter_screen(&mut self, screen: Screen) {
-        self.current_screen = screen;
-        match screen {
-            Screen::NewNote => {
-                self.input = String::new();
-            }
-            Screen::RenameNote => {
-                let Some(note) = self.current_note() else {
-                    self.current_screen = Screen::Main;
-                    return;
-                };
-
-                self.input = note.title.to_string();
-            }
-            _ => {}
-        }
-    }
-
-    pub fn save_input(&mut self) -> Result<()> {
-        let title = self.input.clone();
-
-        match self.current_screen {
-            Screen::NewNote => {
-                self.create_note(title)?;
-            }
-            Screen::RenameNote => {
-                self.rename_note(title)?;
-            }
-            _ => {}
-        }
-
-        self.input = String::new();
-        self.current_screen = Screen::Main;
-
-        Ok(())
+        self.scroll.reset();
     }
 
     /// Deletes a `Note` entry from notes and filesystem.
-    pub fn delete_note(&mut self) -> Result<()> {
-        let Some(index) = self.list_state.selected() else {
-            self.current_screen = Screen::Main;
-            return Ok(());
-        };
+    fn delete_note(&mut self, index: usize) -> Result<()> {
         let Some(note) = self.notes.get(index) else {
-            self.current_screen = Screen::Main;
             return Ok(());
         };
-
         fs::remove_file(&note.path)?;
         self.notes.remove(index);
-
-        let len = self.notes.len();
-        self.list_state.select(if len == 0 {
+        self.list_state.select(if self.notes.is_empty() {
             None
         } else {
-            Some(index.min(len - 1))
+            Some(index.min(self.notes.len() - 1))
         });
-
-        self.scroll_offset = 0;
-        self.current_screen = Screen::Main;
+        self.scroll.reset();
         Ok(())
     }
 
     /// Renames the title of a `Note` entry and filename.
-    fn rename_note(&mut self, new_title: String) -> Result<()> {
+    fn rename_note(&mut self, index: usize, new_title: String) -> Result<()> {
         validate_title(&new_title)?;
-
-        let Some(index) = self.list_state.selected() else {
-            return Ok(());
-        };
-        let Some(note) = self.current_note() else {
-            return Ok(());
-        };
-
-        let old_title = note.title.clone();
+        let old_note = self.notes.get(index).context("Note no longer exists")?;
+        let old_title = old_note.title.clone();
         if new_title == old_title {
             return Ok(());
         }
-        let old_path = note.path.clone();
+        let old_path = old_note.path.clone();
 
-        if self.notes.iter().find(|n| n.title == new_title).is_some() {
+        if self.notes.iter().any(|n| n.title == new_title) {
             bail!("Duplicate title \"{}\"", new_title);
         }
 
@@ -225,7 +266,7 @@ impl App {
         self.list_state
             .select(self.notes.iter().position(|x| x.title == new_title));
 
-        self.scroll_offset = 0;
+        self.scroll.reset();
         Ok(())
     }
 
@@ -233,7 +274,7 @@ impl App {
     fn create_note(&mut self, title: String) -> Result<()> {
         validate_title(&title)?;
 
-        if self.notes.iter().find(|n| n.title == title).is_some() {
+        if self.notes.iter().any(|n| n.title == title) {
             bail!("Duplicate title \"{}\"", title);
         }
 
@@ -252,11 +293,12 @@ impl App {
         self.list_state
             .select(self.notes.iter().position(|x| x.title == title));
 
-        self.scroll_offset = 0;
+        self.scroll.reset();
         Ok(())
     }
 }
 
+/// Validates title.
 fn validate_title(title: &str) -> Result<()> {
     let trimmed = title.trim();
     if trimmed.is_empty() {
@@ -268,6 +310,79 @@ fn validate_title(title: &str) -> Result<()> {
     if title.contains(['/', '\\', '\0']) {
         bail!("Title contains invalid characters");
     }
-    // optionally reject Windows-reserved names and trailing '.'
+    if cfg!(windows) {
+        validate_title_windows(title)?
+    }
     Ok(())
+}
+
+/// Windows-only title validation.
+fn validate_title_windows(title: &str) -> Result<()> {
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "CONIN$",
+        "CONOUT$",
+    ];
+
+    if title
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+    {
+        bail!("Title contains characters not allowed on Windows");
+    }
+    if title.ends_with('.') || title.ends_with(' ') {
+        bail!("Title cannot end with a dot or space on Windows");
+    }
+
+    let stem = title.split('.').next().unwrap_or(title);
+    let stem = stem.trim_end_matches([' ', '.']).to_ascii_uppercase();
+    if RESERVED.contains(&stem.as_str()) {
+        bail!("\"{title}\" is a reserved name on Windows");
+    }
+
+    Ok(())
+}
+
+/// Current app screen.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Screen {
+    Main,
+    NewNote { input: String },
+    RenameNote { index: usize, input: String },
+    DeleteNote { index: usize },
+}
+
+/// Scroll info.
+#[derive(Debug, Default)]
+pub struct Scroll {
+    offset: u16,
+    max: u16,
+}
+
+impl Scroll {
+    /// Returns `offset`.
+    pub fn offset(&self) -> u16 {
+        self.offset
+    }
+
+    /// scrolls down `amount`.
+    pub fn down(&mut self, amount: u16) {
+        self.offset = self.offset.saturating_add(amount).min(self.max);
+    }
+
+    /// scrolls up `amount`.
+    pub fn up(&mut self, amount: u16) {
+        self.offset = self.offset.saturating_sub(amount);
+    }
+
+    /// Resets scroll offset.
+    pub fn reset(&mut self) {
+        self.offset = 0;
+    }
+
+    /// Reconcile with the measurements from the last layout pass.
+    pub fn sync(&mut self, viewport_height: u16, content_height: u16) {
+        self.max = content_height.saturating_sub(viewport_height);
+        self.offset = self.offset.min(self.max);
+    }
 }

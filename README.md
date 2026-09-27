@@ -43,8 +43,8 @@ the config file.
 Here is an example config file:
 
 ```toml
-# Notes directory (absolute path)
-notes_dir = "/home/peanut/notes"
+# Notes directory
+notes_dir = "~/notes"
 
 # UI related configuration
 [ui]

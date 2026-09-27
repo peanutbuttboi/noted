@@ -43,7 +43,10 @@ fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
 }
 
 impl Config {
-    /// Returns a default implementation of [`Config`].
+    /// Returns a user default implementation of [`Config`].
+    ///
+    /// # Errors
+    /// Will fail if finding the home directory fails.
     pub fn user_default() -> Result<Self> {
         let home_dir = dirs::home_dir()
             .context("could not determine home directory; set `notes_dir` in the config")?;
@@ -59,7 +62,7 @@ impl FromStr for Config {
     type Err = toml::de::Error;
 
     /// Parses the config string into a [`Config`] instance.
-    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         toml::from_str::<Self>(s)
     }
 }

@@ -42,7 +42,7 @@ impl Note {
     /// Try to build a note from `path`.
     ///
     /// # Errors
-    /// Returns a [`NoteError`] when `path` is not a markdown file.
+    /// Returns a [`NoteError`] when handling the `path` fails.
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, NoteError> {
         let path = path.as_ref();
 
@@ -80,7 +80,7 @@ impl Note {
     /// Updates the contents of a note.
     ///
     /// # Errors
-    /// It will fail if reading to a string fails.
+    /// It will fail if `std::fs::read_to_string` fails.
     pub fn update_content(&mut self) -> Result<()> {
         self.content = fs::read_to_string(&self.path)?;
         Ok(())

@@ -34,42 +34,65 @@ type Terminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::St
 fn main() -> Result<()> {
     let config = parse_config()?;
     let mut app = App::build(config)?;
+    install_panic_hook();
     let mut terminal = ratatui::init();
-
     let result = run(&mut terminal, &mut app);
-
     ratatui::restore();
     result
+}
+
+/// Installs the panic hook to restore terminal on panic.
+fn install_panic_hook() {
+    let previous_hook = std::panic::take_hook();
+
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(stdout(), LeaveAlternateScreen);
+
+        previous_hook(panic_info);
+    }));
 }
 
 /// Run the main drawing and event handling loop.
 fn run(terminal: &mut Terminal, app: &mut App) -> Result<()> {
     loop {
-        terminal.draw(|frame| ui::render(frame, app))?;
-        match app.current_screen {
-            Screen::Main => match handle_events(app)? {
-                Action::Down => app.select_next(),
-                Action::Up => app.select_prev(),
+        // `ListState.offset` is owned by the widget and is reconliced after drawing.
+        let mut list_state = *app.list_state();
+        let mut sync: Option<(u16, usize)> = None;
+
+        terminal.draw(|frame| {
+            let layout = ui::layout(frame.area(), &app.config().ui);
+            let content = if let Some(index) = app.selected_index() {
+                &app.notes()[index].content
+            } else {
+                ""
+            };
+
+            let preview = ui::prepare_preview(content, &app.config().ui, layout.preview_inner);
+
+            sync = Some((layout.preview_inner.height, preview.text_height));
+
+            ui::render(frame, app, &mut list_state, layout, preview);
+        })?;
+
+        if let Some((viewport, content)) = sync {
+            app.sync_scroll(viewport, content.min(u16::MAX as usize) as u16);
+        }
+
+        app.set_list_state(list_state);
+        app.clear_status();
+
+        match app.screen() {
+            Screen::Main => match handle_events(app.screen())? {
+                Action::Down => app.select_next_note(),
+                Action::Up => app.select_prev_note(),
                 Action::ScrollUp(amount) => app.scroll_up(amount),
                 Action::ScrollDown(amount) => app.scroll_down(amount),
-                Action::New => app.enter_screen(Screen::NewNote),
-                Action::Rename => {
-                    if app.current_note().is_some() {
-                        app.enter_screen(Screen::RenameNote);
-                    } else {
-                        app.set_status("No note selected".to_string());
-                    }
-                }
-                Action::Delete => {
-                    if app.current_note().is_some() {
-                        app.enter_screen(Screen::DeleteNote);
-                    } else {
-                        app.set_status("No note selected".to_string());
-                    }
-                }
-
+                Action::New => app.begin_new_note(),
+                Action::Rename => status_on_err(app, |a| a.begin_rename_note()),
+                Action::Delete => status_on_err(app, |a| a.begin_delete_note()),
                 Action::Edit => {
-                    if app.current_note().is_some() {
+                    if app.selected_index().is_some() {
                         if let Err(err) = run_editor(terminal, app) {
                             app.set_status(format!("{err:#}"));
                         }
@@ -80,39 +103,47 @@ fn run(terminal: &mut Terminal, app: &mut App) -> Result<()> {
                 Action::Quit => break Ok(()),
                 _ => {}
             },
-            Screen::NewNote | Screen::RenameNote => match handle_events(app)? {
-                Action::Char(c) => {
-                    app.input.push(c);
-                }
-                Action::Delete => {
-                    app.input.pop();
-                }
-                Action::Confirm => {
-                    if let Err(err) = app.save_input() {
-                        app.set_status(format!("{err:#}"));
+            Screen::NewNote { .. } | Screen::RenameNote { .. } => {
+                match handle_events(app.screen())? {
+                    Action::Char(c) => {
+                        if let Some(input) = app.input_mut() {
+                            input.push(c);
+                        }
                     }
+                    Action::Delete => app.pop_input(),
+                    Action::Confirm => status_on_err(app, |a| a.confirm()),
+                    Action::Deny => app.cancel(),
+                    _ => {}
                 }
-                Action::Deny => app.enter_screen(Screen::Main),
-                _ => {}
-            },
-            Screen::DeleteNote => match handle_events(app)? {
-                Action::Confirm => {
-                    if let Err(err) = app.delete_note() {
-                        app.set_status(format!("{err:#}"));
-                    }
-                }
-                Action::Deny => app.enter_screen(Screen::Main),
+            }
+            Screen::DeleteNote { .. } => match handle_events(app.screen())? {
+                Action::Confirm => status_on_err(app, |a| a.confirm()),
+                Action::Deny => app.cancel(),
                 _ => {}
             },
         }
     }
 }
 
+/// Call `set_status` in case of an Error.
+fn status_on_err<F>(app: &mut App, f: F)
+where
+    F: FnOnce(&mut App) -> Result<()>,
+{
+    let result = f(app);
+
+    match result {
+        Ok(()) => {}
+        Err(err) => app.set_status(format!("{err:#}")),
+    }
+}
+
 /// Run the editor to edit the note.
 fn run_editor(terminal: &mut Terminal, app: &mut App) -> Result<()> {
-    let Some(note) = app.current_note_mut() else {
+    let Some(index) = app.selected_index() else {
         bail!("No note selected")
     };
+    let note = app.note_mut(index);
 
     execute!(stdout(), LeaveAlternateScreen)?;
     disable_raw_mode()?;
@@ -133,8 +164,17 @@ fn parse_config() -> Result<Config> {
 
     let config_path = Path::new(&config_dir).join("noted").join("config.toml");
 
-    if fs::exists(&config_path).context("Failed to check config file's existence.")? {
-        Ok(Config::from_str(&fs::read_to_string(config_path)?)?)
+    if fs::exists(&config_path).with_context(|| {
+        format!(
+            "failed to check config file's existence {}",
+            config_path.display()
+        )
+    })? {
+        Ok(Config::from_str(
+            &fs::read_to_string(&config_path)
+                .with_context(|| format!("failed to read {} to string", config_path.display()))?,
+        )
+        .context("failed to build config from the contents.")?)
     } else {
         Config::user_default()
     }
