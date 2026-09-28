@@ -147,9 +147,7 @@ pub fn render(
 
     render_list(
         frame,
-        layout
-            .list
-            .centered(Constraint::Ratio(3, 4), Constraint::Ratio(1, 2)),
+        layout.list.centered_horizontally(Constraint::Ratio(3, 4)),
         app,
         list_state,
     );
@@ -368,7 +366,7 @@ pub fn render_status(frame: &mut Frame, area: Rect, app: &App, status: &str) {
 }
 
 /// Fits text to width by separating it into multiple lines.
-pub fn fit_to_width(text: &str, width: usize) -> String {
+fn fit_to_width(text: &str, width: usize) -> String {
     assert!(width > 0, "width must be greater than zero");
 
     let mut result = String::with_capacity(text.len());
@@ -392,4 +390,59 @@ pub fn fit_to_width(text: &str, width: usize) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_fit_to_width() {
+        let text = "Hello, World!";
+
+        // Short text
+        assert_eq!(fit_to_width(text, 100), text);
+
+        // Exact length
+        assert_eq!(fit_to_width(text, text.len()), text);
+
+        // Multiline
+        assert_eq!(fit_to_width(text, 5), "Hello\n, Wor\nld!");
+
+        // Empty
+        let text = "";
+        assert_eq!(fit_to_width(text, 5), "");
+
+        // Newline
+        let text = "\n";
+        assert_eq!(fit_to_width(text, 5), "\n");
+
+        // Emoji
+        let text = "🤗🤗🤗🤗";
+        assert_eq!(fit_to_width(text, 2), "🤗\n🤗\n🤗\n🤗");
+
+        // CJK
+        let text = "已记录";
+        assert_eq!(fit_to_width(text, 2), "已\n记\n录");
+    }
+
+    #[should_panic]
+    #[test]
+    fn test_fit_to_width_zero_width() {
+        let text = "Hello, World!";
+        fit_to_width(text, 0);
+    }
+
+    #[test]
+    fn test_prepare_preview() {
+        assert_eq!(
+            prepare_preview("test", &UI::default(), Rect::new(0, 0, 20, 5)).text_height,
+            1
+        );
+
+        assert_eq!(
+            prepare_preview("Hello, World!", &UI::default(), Rect::new(0, 0, 5, 5)).text_height,
+            4
+        );
+    }
 }

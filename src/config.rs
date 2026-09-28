@@ -125,6 +125,7 @@ impl Default for UI {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color::{Blue, Rgb};
 
     #[test]
     fn test_parse_config() {
@@ -132,5 +133,36 @@ mod tests {
         let config = Config::from_str(file).unwrap();
 
         assert_eq!(Config::user_default().unwrap(), config);
+    }
+
+    #[test]
+    fn test_expand_tilde() {
+        let home = dirs::home_dir().expect("expected to find home path");
+        assert_eq!(expand_tilde("~").unwrap(), home);
+        assert_eq!(expand_tilde("~/x").unwrap(), home.join("x"));
+        assert_eq!(expand_tilde("~\\x").unwrap(), home.join("x"));
+        assert_eq!(expand_tilde("~/a/b").unwrap(), home.join("a").join("b"));
+        assert_eq!(expand_tilde("~x").unwrap(), Path::new("~x"));
+        assert_eq!(expand_tilde("/x").unwrap(), Path::new("/x"));
+    }
+
+    #[test]
+    fn test_deserialize_hex_color() {
+        let tmp_dir = tempfile::tempdir().expect("Failed to create temp directory");
+        let config = format!("notes_dir = \"{}/notes\"\n[ui]\n", tmp_dir.path().display());
+
+        let parse =
+            |accent: &str| Config::from_str(&format!("{config}accent = \"{accent}\"")).unwrap();
+
+        assert_eq!(parse("").ui.accent, Blue);
+        assert_eq!(parse("#1e90ff").ui.accent, Rgb(0x1e, 0x90, 0xff));
+        assert_eq!(parse("#1E90FF").ui.accent, Rgb(0x1e, 0x90, 0xff));
+        assert_eq!(parse("  #000000  ").ui.accent, Rgb(0x00, 0x00, 0x00));
+        assert_eq!(parse("#ffffff").ui.accent, Rgb(0xff, 0xff, 0xff));
+
+        for invalid in ["1e90ff", "#fff", "#12345g", "#1234567"] {
+            let result = Config::from_str(&format!("{config}accent = \"{invalid}\""));
+            assert!(result.is_err(), "expected `{invalid}` to be rejected");
+        }
     }
 }

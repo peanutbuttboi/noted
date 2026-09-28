@@ -897,6 +897,7 @@ dependencies = [
  "edit",
  "ratatui",
  "serde",
+ "tempfile",
  "thiserror 2.0.20",
  "toml",
  "tui-markdown",

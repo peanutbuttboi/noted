@@ -12,7 +12,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use anyhow::{Context, Result, bail};
 
-/// App structure.
+/// App state machine.
 #[derive(Debug)]
 pub struct App {
     notes: Vec<Note>,
@@ -39,7 +39,9 @@ impl App {
 
             match Note::from_path(&path) {
                 Ok(note) => notes.push(note),
-                Err(NoteError::NotMarkdown(_) | NoteError::NotAFile(_)) => {}
+                Err(
+                    NoteError::NotMarkdown(_) | NoteError::NotAFile(_) | NoteError::NonExistent(_),
+                ) => {}
                 Err(e) => eprintln!("Warning: Invalid file: {e}"),
             };
         }
@@ -284,7 +286,7 @@ impl App {
             .write(true)
             .create_new(true)
             .open(&path)
-            .with_context(|| format!("{title}.md already exists"))?;
+            .with_context(|| format!("Filename already exists \"{}.md\"", title))?;
 
         let note = Note::from_path(path).with_context(|| "Failed to create note")?;
 
@@ -384,5 +386,362 @@ impl Scroll {
     pub fn sync(&mut self, viewport_height: u16, content_height: u16) {
         self.max = content_height.saturating_sub(viewport_height);
         self.offset = self.offset.min(self.max);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::assert_matches;
+    use std::fs::write;
+
+    use super::*;
+    use crate::config::UI;
+
+    #[test]
+    fn test_app_build_loads_and_sorts() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("bravo.md"), "b").unwrap();
+        fs::write(dir.path().join("Alpha.md"), "a").unwrap();
+        fs::write(dir.path().join("ignore.txt"), "x").unwrap();
+        fs::create_dir(dir.path().join("sub.md")).unwrap();
+
+        let app = app_in(dir.path());
+        let titles: Vec<_> = app.notes().iter().map(|n| n.title.as_str()).collect();
+
+        assert_eq!(titles, ["Alpha", "bravo"]);
+        assert_eq!(app.selected_index(), Some(0));
+    }
+
+    #[test]
+    fn test_app_build_creates_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("does/not/exist");
+        let app = App::build(Config {
+            notes_dir: notes.clone(),
+            ui: UI::default(),
+        })
+        .unwrap();
+
+        assert!(notes.is_dir());
+        assert!(app.notes().is_empty());
+    }
+
+    #[test]
+    fn test_scroll() {
+        let mut scroll = Scroll::default();
+        scroll.sync(2, 8);
+
+        scroll.up(16);
+        assert_eq!(scroll.offset(), 0);
+
+        scroll.down(16);
+        assert_eq!(scroll.offset(), 6);
+
+        scroll.sync(2, 4);
+        assert_eq!(scroll.offset(), 2);
+
+        scroll.reset();
+        assert_eq!(scroll.offset(), 0);
+
+        scroll.up(16);
+        scroll.sync(4, 2);
+        assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn test_validate_title() {
+        let titles_valid = ["notes", "My Note", "note-1"];
+
+        for title in titles_valid {
+            assert!(validate_title(title).is_ok(), "expected {title:?} valid");
+        }
+
+        let titles_invalid = ["", " ", " x", "x ", "a/b", "a\\b", "a\0b"];
+
+        for title in titles_invalid {
+            assert!(validate_title(title).is_err(), "expected {title:?} invalid");
+        }
+    }
+
+    #[test]
+    fn test_validate_title_windows() {
+        let titles_valid = ["CONcert", "COM10", "auxiliary", "my.note"];
+
+        for title in titles_valid {
+            assert!(
+                validate_title_windows(title).is_ok(),
+                "expected {title:?} valid"
+            );
+        }
+
+        let titles_invalid = [
+            "CON", "con", "CON.md", "aux", "COM1", "LPT9", "nul", "CONIN$", "foo.", "foo<bar",
+            "a:b", "LPT1", "PRN", "CONOUT$", "foo ",
+        ];
+
+        for title in titles_invalid {
+            assert!(
+                validate_title_windows(title).is_err(),
+                "expected {title:?} invalid"
+            );
+        }
+    }
+    #[test]
+    fn test_app_rejects_invalid_title() {
+        let note_dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(note_dir.path());
+
+        // Create
+        let err = app_new_note(&mut app, "a/b").unwrap_err();
+        assert!(err.to_string().contains("invalid characters"));
+        assert_matches!(app.screen(), Screen::NewNote { .. });
+        assert!(app.notes().is_empty());
+        assert!(!note_dir.path().join("a").exists());
+
+        // Rename
+        app_new_note(&mut app, "note").unwrap();
+        let err = app_rename_note(&mut app, "").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+        assert_matches!(app.screen(), Screen::RenameNote { .. });
+        assert_eq!(app.notes()[0].title, "note");
+        assert!(note_dir.path().join("note.md").exists());
+    }
+
+    fn app_in(dir: &Path) -> App {
+        App::build(Config {
+            notes_dir: dir.to_path_buf(),
+            ui: UI::default(),
+        })
+        .unwrap()
+    }
+
+    fn app_new_note(app: &mut App, title: &str) -> Result<()> {
+        app.begin_new_note();
+        if let Some(input) = app.input_mut() {
+            *input = String::from(title);
+        }
+        app.confirm()
+    }
+
+    fn app_rename_note(app: &mut App, new_title: &str) -> Result<()> {
+        app.begin_rename_note()?;
+        if let Some(input) = app.input_mut() {
+            *input = String::from(new_title);
+        }
+        app.confirm()
+    }
+
+    fn app_delete_note(app: &mut App) -> Result<()> {
+        app.begin_delete_note()?;
+        app.confirm()
+    }
+
+    #[test]
+    fn test_app_create_note() {
+        let note_dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(note_dir.path());
+
+        // Empty
+        assert_eq!(app.notes(), &[]);
+        assert_eq!(app.selected_index(), None);
+
+        app_new_note(&mut app, "note").unwrap();
+        let files_path = note_dir.path().join("note.md");
+        let index = app.selected_index().unwrap();
+
+        // File created
+        assert!(files_path.exists());
+        // Inserted and selected
+        assert_eq!(app.notes()[index].title, "note");
+
+        app_new_note(&mut app, "abc").unwrap();
+        let index = app.selected_index().unwrap();
+
+        // Inserted, sorted and selected
+        assert_eq!(index, 0);
+        assert_eq!(app.notes()[index].title, "abc");
+
+        let err = app_new_note(&mut app, "abc").unwrap_err();
+
+        // Duplicate title error
+        assert!(err.to_string().contains("Duplicate title"));
+        // Modal stays open
+        assert_matches!(app.screen(), Screen::NewNote { .. });
+
+        write(note_dir.path().join("taken.md"), "").unwrap();
+        let err = app_new_note(&mut app, "taken").unwrap_err();
+
+        // Existing file
+        assert!(err.to_string().contains("Filename already exists"));
+    }
+
+    #[test]
+    fn test_app_rename_note() {
+        let note_dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(note_dir.path());
+
+        let result = app_rename_note(&mut app, "title");
+        // Renaming on empty notes
+        assert!(result.is_err());
+
+        app_new_note(&mut app, "note").unwrap();
+        app_rename_note(&mut app, "renamed").unwrap();
+
+        let index = app.selected_index().unwrap();
+
+        // File renamed
+        assert!(note_dir.path().join("renamed.md").exists());
+        // Old file removed
+        assert!(!note_dir.path().join("note.md").exists());
+        // Title renamed and selected
+        assert_eq!(app.notes()[index].title, "renamed");
+
+        let result = app_rename_note(&mut app, "renamed");
+        // Same title accepted
+        assert!(result.is_ok());
+
+        let result = app_rename_note(&mut app, "Renamed");
+        // Case sensitive accepted
+        assert!(result.is_ok());
+
+        app_new_note(&mut app, "note").unwrap();
+        let err = app_rename_note(&mut app, "Renamed").unwrap_err();
+
+        // Duplicate title error
+        assert!(err.to_string().contains("Duplicate title"));
+        // Modal stays open
+        assert_matches!(app.screen(), Screen::RenameNote { .. });
+
+        fs::write(note_dir.path().join("taken.md"), "").unwrap();
+        let err = app_rename_note(&mut app, "taken").unwrap_err();
+
+        // Existing file
+        assert!(err.to_string().contains("Filename already exists"));
+    }
+
+    #[test]
+    fn test_app_delete_note() {
+        let note_dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(note_dir.path());
+
+        let result = app_delete_note(&mut app);
+        // Deleting on empty notes
+        assert!(result.is_err());
+
+        app_new_note(&mut app, "note1").unwrap();
+        app_new_note(&mut app, "note2").unwrap();
+        app_new_note(&mut app, "note3").unwrap();
+
+        app.select_prev_note();
+        app_delete_note(&mut app).unwrap();
+
+        let files_path = note_dir.path().join("note2.md");
+
+        // Correct note deleted
+        assert_eq!(
+            app.notes()
+                .iter()
+                .map(|n| n.title.as_str())
+                .collect::<Vec<_>>(),
+            ["note1", "note3"]
+        );
+        // File deleted
+        assert!(!files_path.exists());
+        // Selection
+        assert_eq!(app.selected_index(), Some(1));
+
+        app_delete_note(&mut app).unwrap();
+        app_delete_note(&mut app).unwrap();
+
+        // Notes emptied
+        assert!(app.notes().is_empty());
+    }
+
+    #[test]
+    fn test_select_note() {
+        let note_dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(note_dir.path());
+
+        app.select_next_note();
+        // Selection with no notes
+        assert_eq!(app.selected_index(), None);
+
+        app.select_prev_note();
+        // Selection with no notes
+        assert_eq!(app.selected_index(), None);
+
+        app_new_note(&mut app, "note1").unwrap();
+        app_new_note(&mut app, "note2").unwrap();
+
+        app.select_next_note();
+        // Selection at bounds
+        assert_eq!(app.selected_index(), Some(1));
+
+        app.sync_scroll(10, 20);
+        app.scroll_down(5);
+
+        app.select_next_note();
+        // Normal selection
+        assert_eq!(app.selected_index(), Some(1));
+        // Scroll reset
+        assert_eq!(app.scroll_offset(), 0);
+
+        app.sync_scroll(10, 20);
+        app.scroll_down(5);
+
+        app.select_prev_note();
+        // Normal selection
+        assert_eq!(app.selected_index(), Some(0));
+        // Scroll reset
+        assert_eq!(app.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn test_status() {
+        let note_dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(note_dir.path());
+
+        assert_eq!(app.status(), &None);
+        app.set_status("test".to_string());
+        assert_eq!(app.status(), &Some("test".to_string()));
+        app.clear_status();
+        assert_eq!(app.status(), &None);
+    }
+
+    #[test]
+    fn test_cancel() {
+        let note_dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(note_dir.path());
+
+        app.begin_new_note();
+        assert_matches!(app.screen(), Screen::NewNote { .. });
+        app.cancel();
+        assert_matches!(app.screen(), Screen::Main);
+    }
+
+    #[test]
+    fn test_input_mut() {
+        let note_dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(note_dir.path());
+
+        assert!(app.input_mut().is_none());
+        app.begin_new_note();
+        assert!(app.input_mut().is_some());
+    }
+
+    #[test]
+    fn test_pop_input() {
+        let note_dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(note_dir.path());
+
+        app_new_note(&mut app, "noted").unwrap();
+        app.begin_rename_note().unwrap();
+        app.pop_input();
+        assert_eq!(app.input_mut().unwrap(), "note");
+
+        app_new_note(&mut app, "e\u{301}").unwrap();
+        app.begin_rename_note().unwrap();
+        app.pop_input();
+        assert_eq!(app.input_mut().unwrap(), "");
     }
 }

@@ -13,6 +13,10 @@ pub enum NoteError {
     #[error("`{}` is not a markdown file", .0.display())]
     NotMarkdown(PathBuf),
 
+    /// The path points to a markdown (`.md`) file but doesn't exist.
+    #[error("`{}` does not exist", .0.display())]
+    NonExistent(PathBuf),
+
     /// The path exists but is not a regular file (e.g. a directory).
     #[error("`{}` is not a file", .0.display())]
     NotAFile(PathBuf),
@@ -45,6 +49,10 @@ impl Note {
     /// Returns a [`NoteError`] when handling the `path` fails.
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, NoteError> {
         let path = path.as_ref();
+
+        if !path.exists() {
+            return Err(NoteError::NonExistent(path.to_path_buf()));
+        }
 
         let is_markdown = path
             .extension()
@@ -84,5 +92,77 @@ impl Note {
     pub fn update_content(&mut self) -> Result<()> {
         self.content = fs::read_to_string(&self.path)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_note_from_path() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+
+        // Valid markdown file
+        let path = tmp_dir.path().join("groceries.md");
+        fs::write(&path, "# Groceries\n\n- milk\n").unwrap();
+
+        let note = Note::from_path(&path).unwrap();
+        assert_eq!(note.title, "groceries");
+        assert_eq!(note.content, "# Groceries\n\n- milk\n");
+        assert_eq!(note.path, path);
+
+        // Extensions check
+        let upper = tmp_dir.path().join("UPPER.MD");
+        fs::write(&upper, "hi").unwrap();
+        assert_eq!(Note::from_path(&upper).unwrap().title, "UPPER");
+
+        // Non-markdown file
+        let txt = tmp_dir.path().join("notes.txt");
+        fs::write(&txt, "").unwrap();
+        assert!(matches!(
+            Note::from_path(&txt),
+            Err(NoteError::NotMarkdown(p)) if p == txt
+        ));
+
+        // Non-existant file
+        let missing = tmp_dir.path().join("notes.md");
+        assert!(matches!(
+            Note::from_path(&missing),
+            Err(NoteError::NonExistent(p)) if p == missing
+        ));
+
+        // Directory
+        let dir = tmp_dir.path().join("folder.md");
+        fs::create_dir(&dir).unwrap();
+        assert!(matches!(
+            Note::from_path(&dir),
+            Err(NoteError::NotAFile(p)) if p == dir
+        ));
+
+        // Non-UTF-8
+        let invalid = tmp_dir.path().join("invalid.md");
+        fs::write(&invalid, [0xff, 0xfe, 0xfd]).unwrap();
+        match Note::from_path(&invalid) {
+            Err(NoteError::Read { path, source }) => {
+                assert_eq!(path, invalid);
+                assert_eq!(source.kind(), std::io::ErrorKind::InvalidData);
+            }
+            other => panic!("expected NoteError::Read, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_note_update_content() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let path = tmp_dir.path().join("note.md");
+        fs::write(&path, "before").unwrap();
+
+        let mut note = Note::from_path(&path).unwrap();
+        assert_eq!(note.content, "before");
+
+        fs::write(&path, "after").unwrap();
+        note.update_content().unwrap();
+        assert_eq!(note.content, "after");
     }
 }
