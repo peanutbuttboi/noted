@@ -5,6 +5,20 @@ Built with [ratatui](https://ratatui.rs/) and [rust](https://rust-lang.org/).
 Notes are stored as plain text markdown files.
 ![](./assets/screenshot.png)
 
+## Installation
+Linux/MacOS:
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/peanutbuttboi/noted/releases/download/v0.2.0/noted-installer.sh | sh
+
+```
+Windows:
+```ps1
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/peanutbuttboi/noted/releases/download/v0.2.0/noted-installer.ps1 | iex"
+
+```
+
+Or download the prebuilt binaries for your platform from the [Releases](https://github.com/peanutbuttboi/noted/releases) page.
+
 ## Build
 
 ```bash
