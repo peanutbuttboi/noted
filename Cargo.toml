@@ -1,7 +1,10 @@
 [package]
 name = "noted"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+repository = "https://github.com/peanutbuttboi/noted"
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -18,3 +21,8 @@ unicode-width = "0.2.2"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
