@@ -13,7 +13,8 @@ use ratatui::{
     },
 };
 use tui_markdown::{BuiltinCodeTheme, Options, StyleSheet};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// Default theme for `tui_markdown`
 #[derive(Debug, Clone, Copy)]
@@ -372,20 +373,20 @@ fn fit_to_width(text: &str, width: usize) -> String {
     let mut result = String::with_capacity(text.len());
     let mut line_width = 0;
 
-    for ch in text.chars() {
-        let w = ch.width().unwrap_or(0);
-        if ch == '\n' {
+    for ch in text.graphemes(true) {
+        let w = ch.width();
+        if ch.contains('\n') {
             result.push('\n');
             line_width = 0;
             continue;
         }
 
-        if line_width == width {
+        if line_width > 0 && line_width + w > width {
             result.push('\n');
             line_width = 0;
         }
 
-        result.push(ch);
+        result.push_str(ch);
         line_width += w;
     }
 
@@ -424,6 +425,10 @@ mod test {
         // CJK
         let text = "已记录";
         assert_eq!(fit_to_width(text, 2), "已\n记\n录");
+
+        // Mixed
+        let text = "a已";
+        assert_eq!(fit_to_width(text, 2), "a\n已");
     }
 
     #[should_panic]

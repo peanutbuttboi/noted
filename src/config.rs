@@ -31,7 +31,15 @@ fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
         return dirs::home_dir()
             .ok_or_else(|| "cannot expand `~`: home directory not found".to_string());
     }
-    let rest = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\"));
+
+    let rest = raw.strip_prefix("~/").or_else(|| {
+        if cfg!(windows) {
+            raw.strip_prefix("~\\")
+        } else {
+            None
+        }
+    });
+
     match rest {
         Some(rest) => {
             let home = dirs::home_dir()
@@ -140,10 +148,13 @@ mod tests {
         let home = dirs::home_dir().expect("expected to find home path");
         assert_eq!(expand_tilde("~").unwrap(), home);
         assert_eq!(expand_tilde("~/x").unwrap(), home.join("x"));
-        assert_eq!(expand_tilde("~\\x").unwrap(), home.join("x"));
         assert_eq!(expand_tilde("~/a/b").unwrap(), home.join("a").join("b"));
         assert_eq!(expand_tilde("~x").unwrap(), Path::new("~x"));
         assert_eq!(expand_tilde("/x").unwrap(), Path::new("/x"));
+        // windows-only
+        if cfg!(windows) {
+            assert_eq!(expand_tilde("~\\x").unwrap(), home.join("x"));
+        }
     }
 
     #[test]

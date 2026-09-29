@@ -34,23 +34,10 @@ type Terminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::St
 fn main() -> Result<()> {
     let config = parse_config()?;
     let mut app = App::build(config)?;
-    install_panic_hook();
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &mut app);
     ratatui::restore();
     result
-}
-
-/// Installs the panic hook to restore terminal on panic.
-fn install_panic_hook() {
-    let previous_hook = std::panic::take_hook();
-
-    std::panic::set_hook(Box::new(move |panic_info| {
-        let _ = disable_raw_mode();
-        let _ = execute!(stdout(), LeaveAlternateScreen);
-
-        previous_hook(panic_info);
-    }));
 }
 
 /// Run the main drawing and event handling loop.
@@ -151,9 +138,9 @@ fn run_editor(terminal: &mut Terminal, app: &mut App) -> Result<()> {
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
     terminal.clear()?;
+    note.update_content()?;
     edit_result?;
 
-    note.update_content()?;
     Ok(())
 }
 
